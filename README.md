@@ -25,7 +25,6 @@ In `Texpose`, we manage concurrent lifecycles through a minimalist model:
 - **Pointer-level Cross-Thread Sharing**: Encapsulates internal data pointers, sizes, and identities into an `Exposee`, facilitating lock-free direct reads across threads.
 - **Flexible Identity Binding and Retrieval**: Precise O(1) lookup within the current thread's exposed list via `Identity` (a unique identifier pointer).
 - **Fully Automatic Lifecycle Management**: Supports **Destroy Callbacks** and **Thread Exit Callbacks**. Automatically cleans up all `Exposee` instances upon thread termination and triggers user logic, eliminating dangling pointers.
-- **Decoupled C Core and C++ Wrapper**: Pure C implementation at the core (minimal, stable, easy to bind with other languages), with a modern C++ RAII wrapper on top that perfectly supports `for-each` syntax.
 
 ---
 
