@@ -22,8 +22,9 @@ In `Texpose`, we manage concurrent lifecycles through a minimalist model:
 ## Core Features
 
 - **Extreme Performance**: Lookup, iteration, and registration all avoid internal locking. Fast paths are dominated by a single memory load, and iteration walks a contiguous pointer array that the hardware prefetcher can fully pipeline.
+- **Cache-Line Isolation**: Core structures are explicitly aligned to prevent false sharing, ensuring that cross-thread reads and local mutations never invalidate each other's CPU caches.
 - **Pointer-level Cross-Thread Sharing**: Encapsulates internal data pointers, sizes, and identities into an `Exposee`, facilitating lock-free direct reads across threads.
-- **Flexible Identity Binding and Retrieval**: Precise O(1) lookup within the current thread's exposed list via `Identity` (a unique identifier pointer).
+- **Flexible Identity Binding and Retrieval**: Precise O(1) lookup within the current thread's exposed list via `Identity` (a unique identifier pointer), backed by dynamic hash bucket resizing.
 - **Fully Automatic Lifecycle Management**: Supports **Destroy Callbacks** and **Thread Exit Callbacks**. Automatically cleans up all `Exposee` instances upon thread termination and triggers user logic, eliminating dangling pointers.
 
 ---
@@ -62,7 +63,7 @@ auto workerThread() -> void {
         // Process currentExposee...
     }
 
-    // Manual cleanup; thread exit also cleans up automatically.
+    // O(1) manual cleanup; thread exit also cleans up automatically.
     exposer.unexpose(exposee);
 }
 ```
@@ -73,27 +74,28 @@ auto workerThread() -> void {
 
 Rather than pinning to a specific benchmark number, `Texpose` is designed around a set of stable performance properties that hold across versions and platforms:
 
-| Characteristic          | Nature                                                              |
-|:------------------------|:--------------------------------------------------------------------|
-| **Registration**        | Constant-time on the fast path; bounded only by the underlying allocator |
-| **Cached Lookup**       | A single pointer comparison — effectively free                       |
-| **General Lookup**      | Hash-based, amortized O(1)                                           |
-| **Iteration**           | Contiguous memory walk, fully friendly to hardware prefetchers       |
-| **Synchronization**     | Zero internal locks; thread-local isolation keeps hot paths free of atomic contention |
+| Characteristic      | Nature                                                                                |
+|:--------------------|:--------------------------------------------------------------------------------------|
+| **Registration**    | Amortized constant-time; bounded only by the underlying allocator                     |
+| **Cached Lookup**   | A single pointer comparison — effectively free                                        |
+| **General Lookup**  | Hash-based, amortized O(1), with dynamic bucket resizing to prevent degradation       |
+| **Unexpose**        | Strict O(1) regardless of registry size, avoiding linear array scans                  |
+| **Iteration**       | Contiguous memory walk, fully friendly to hardware prefetchers                        |
+| **Synchronization** | Zero internal locks; thread-local isolation keeps hot paths free of atomic contention |
 
-In short: no operation on the exposed data itself ever takes a lock, and no internal traversal touches non-contiguous memory. The cost profile is dominated by the user's memory layout, not by `Texpose`.
+In short: no operation on the exposed data itself ever takes a lock, no internal traversal touches non-contiguous memory, and cache lines are strictly isolated to maximize multi-core scaling. The cost profile is dominated by the user's memory layout, not by `Texpose`.
 
 ---
 
 ## Architecture and Lifecycle
 
 ### 1. Data Structure Design
-- **`ThreadExposer`**: A thread-local context that maintains two complementary views of the exposed set — a dynamically resizing contiguous array (for linear traversal) and a hash-based identity index (for O(1) retrieval).
-- **`ThreadExposee`**: A handle wrapping the actual user data, including the data pointer address (`void**`), the size address (`usize*`), the identity, and lifecycle callbacks.
-- **TLS / FLS**: Uses OS-level thread-local storage to access the owning `ThreadExposer` directly, with zero locking overhead.
+- **`ThreadExposer`**: A thread-local context that maintains two complementary views of the exposed set — a dynamically resizing contiguous array (for linear traversal) and a dynamically expanding hash index (for O(1) retrieval).
+- **`ThreadExposee`**: A cache-line-isolated handle wrapping the actual user data, including the data pointer address (`void**`), the size address (`usize*`), the identity, and lifecycle callbacks. It tracks its own relative position in the registry to achieve strict O(1) removal.
+- **TLS / FLS**: Uses OS-level thread-local storage to access the owning `ThreadExposer` directly, with zero locking overhead and an atomic fast path for initialization.
 
 ### 2. Safe Cross-Thread Access
-Because an `Exposee` stores a pointer to the user data pointer (`void**`), cross-thread reads (`peekExposee()`) involve only a single memory load. Combined with a reasonable user-level design (e.g., passing `Exposee` handles only during specific lifecycles), highly efficient lock-free cross-thread data interaction can be achieved.
+Because an `Exposee` stores a pointer to the user data pointer (`void**`), cross-thread reads (`peekExposee()`) involve only a single memory load. Combined with a reasonable user-level design (e.g., passing `Exposee` handles only during specific lifecycles), highly efficient lock-free cross-thread data interaction can be achieved without triggering cache invalidation on the owner thread.
 
 ### 3. Lifecycle Management
 - **`DestroyExposeeCallback`**: Triggered when `unexpose` is explicitly called, used to clean up business resources.
