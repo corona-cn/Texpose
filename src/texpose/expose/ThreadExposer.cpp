@@ -253,7 +253,8 @@ namespace Texpose::src::expose {
                     continue;
                 }
 
-                const usize hash = ((usize) relativeIdentity) >> 3;
+                const usize raw = (usize) relativeIdentity;
+                const usize hash = (raw >> 4) ^ (raw >> 16);
                 const usize index = hash & (newListCount - 1);
                 ThreadExposee* const head = newLists[index];
 
@@ -313,7 +314,8 @@ namespace Texpose::src::expose {
         inSelf->ownedThreadExposees[inSelf->ownedThreadExposeeCount++] = threadExposee;
 
         if (inThreadExposeeRelativeIdentity) {
-            const usize hash = ((usize) inThreadExposeeRelativeIdentity) >> 3;
+            const usize raw = (usize) inThreadExposeeRelativeIdentity;
+            const usize hash = (raw >> 4) ^ (raw >> 16);
             const usize index = hash & (inSelf->identifiedThreadExposeeListCount - 1);
             ThreadExposee* const head = inSelf->identifiedThreadExposeeLists[index];
 
@@ -346,7 +348,8 @@ namespace Texpose::src::expose {
             if (inThreadExposee->prevInIdentifiedThreadExposeeLists) {
                 inThreadExposee->prevInIdentifiedThreadExposeeLists->nextInIdentifiedThreadExposeeLists = inThreadExposee->nextInIdentifiedThreadExposeeLists;
             } else {
-                const usize hash = ((usize) inThreadExposee->relativeIdentity) >> 3;
+                const usize raw = (usize) inThreadExposee->relativeIdentity;
+                const usize hash = (raw >> 4) ^ (raw >> 16);
                 const usize index = hash & (inSelf->identifiedThreadExposeeListCount - 1);
                 inSelf->identifiedThreadExposeeLists[index] = inThreadExposee->nextInIdentifiedThreadExposeeLists;
             }
@@ -412,7 +415,8 @@ namespace Texpose::src::expose {
             return nullptr;
         }
 
-        const usize hash = ((usize) inThreadExposeeRelativeIdentity) >> 3;
+        const usize raw = (usize) inThreadExposeeRelativeIdentity;
+        const usize hash = (raw >> 4) ^ (raw >> 16);
         const usize index = hash & (inSelf->identifiedThreadExposeeListCount - 1);
         ThreadExposee* threadExposee = inSelf->identifiedThreadExposeeLists[index];
         while (threadExposee) {
