@@ -2,7 +2,7 @@
 #include "../../../common/CommonPrimitives.hpp"
 
 namespace Texpose::src::expose {
-    struct ThreadExposee {
+    struct alignas(64) ThreadExposee {
         struct ThreadExposer* ownerThreadExposer;
         const void* relativeIdentity;
         usize relativePosition;
@@ -14,7 +14,7 @@ namespace Texpose::src::expose {
         void (*destroyExposeeCallback)(void* inExposee, void* inExternal);
         void* external;
 
-        struct ThreadExposee* prevInIdentifiedThreadExposeeLists;
+        alignas(64) struct ThreadExposee* prevInIdentifiedThreadExposeeLists;
         struct ThreadExposee* nextInIdentifiedThreadExposeeLists;
     };
 

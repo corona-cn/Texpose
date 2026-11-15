@@ -2,7 +2,7 @@
 #include "../../../common/CommonPrimitives.hpp"
 
 namespace Texpose::src::expose {
-    struct ThreadExposer {
+    struct alignas(64) ThreadExposer {
         struct ThreadExposee** ownedThreadExposees;
         usize ownedThreadExposeeCount;
         usize ownedThreadExposeeCapacity;
