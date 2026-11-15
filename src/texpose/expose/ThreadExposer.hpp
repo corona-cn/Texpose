@@ -9,6 +9,7 @@ namespace Texpose::src::expose {
 
         struct ThreadExposee** identifiedThreadExposeeLists;
         usize identifiedThreadExposeeListCount;
+        usize identifiedThreadExposeeCount;
 
         const void* cachedThreadExposeeIdentity;
         struct ThreadExposee* cachedThreadExposee;

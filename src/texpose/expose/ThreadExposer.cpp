@@ -155,6 +155,7 @@ namespace Texpose::src::expose {
         self->ownedThreadExposeeCount = 0;
         self->ownedThreadExposeeCapacity = 0;
         self->identifiedThreadExposeeListCount = Internal::DEFAULT_IDENTIFIED_LIST_COUNT;
+        self->identifiedThreadExposeeCount = 0;
         self->cachedThreadExposeeIdentity = nullptr;
         self->cachedThreadExposee = nullptr;
 
@@ -194,6 +195,42 @@ namespace Texpose::src::expose {
             return nullptr;
         }
 
+        if (inThreadExposeeIdentity && inSelf->identifiedThreadExposeeCount >= inSelf->identifiedThreadExposeeListCount) {
+            const usize newListCount = inSelf->identifiedThreadExposeeListCount * 2;
+            auto** const newLists = (ThreadExposee**) calloc(newListCount, sizeof(ThreadExposee*));
+            if (!newLists) {
+                return nullptr;
+            }
+
+            const usize count = inSelf->ownedThreadExposeeCount;
+            ThreadExposee** const threadExposees = inSelf->ownedThreadExposees;
+            for (usize i = 0; i < count; ++i) {
+                ThreadExposee* const threadExposee = threadExposees[i];
+                const void* const identity = threadExposee->identity;
+                if (!identity) {
+                    continue;
+                }
+
+                const usize hash = ((usize) identity) >> 3;
+                const usize index = hash & (newListCount - 1);
+                ThreadExposee* const head = newLists[index];
+
+                threadExposee->prevInIdentifiedThreadExposeeLists = nullptr;
+                threadExposee->nextInIdentifiedThreadExposeeLists = head;
+
+                if (head) {
+                    head->prevInIdentifiedThreadExposeeLists = threadExposee;
+                }
+
+                newLists[index] = threadExposee;
+            }
+
+            free(inSelf->identifiedThreadExposeeLists);
+
+            inSelf->identifiedThreadExposeeLists = newLists;
+            inSelf->identifiedThreadExposeeListCount = newListCount;
+        }
+
         auto* const threadExposee = (ThreadExposee*) malloc(sizeof(ThreadExposee));
         if (!threadExposee) {
             return nullptr;
@@ -227,11 +264,16 @@ namespace Texpose::src::expose {
             const usize hash = ((usize) inThreadExposeeIdentity) >> 3;
             const usize index = hash & (inSelf->identifiedThreadExposeeListCount - 1);
             ThreadExposee* const head = inSelf->identifiedThreadExposeeLists[index];
+
             threadExposee->nextInIdentifiedThreadExposeeLists = head;
+
             if (head) {
                 head->prevInIdentifiedThreadExposeeLists = threadExposee;
             }
+
             inSelf->identifiedThreadExposeeLists[index] = threadExposee;
+
+            ++inSelf->identifiedThreadExposeeCount;
         }
 
         inSelf->cachedThreadExposeeIdentity = inThreadExposeeIdentity;
@@ -260,6 +302,8 @@ namespace Texpose::src::expose {
             if (inThreadExposee->nextInIdentifiedThreadExposeeLists) {
                 inThreadExposee->nextInIdentifiedThreadExposeeLists->prevInIdentifiedThreadExposeeLists = inThreadExposee->prevInIdentifiedThreadExposeeLists;
             }
+
+            --inSelf->identifiedThreadExposeeCount;
         }
 
         const usize count = inSelf->ownedThreadExposeeCount;

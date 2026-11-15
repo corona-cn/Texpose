@@ -247,6 +247,61 @@ namespace Texpose::test::expose {
                 LOG("Unexpose 后缓存失效: ", !f4.isValid() ? "PASS" : "FAIL");
             }
         }
+
+        auto testRehashExpansion() -> void {
+            LOG("--- [正确性] 哈希桶动态扩容 ---");
+            LOGGER_INDENT_BLOCK(true) {
+                auto exposer = ThreadExposer::current();
+
+                constexpr int kCount = 1000;
+                std::vector<int> values(kCount, 0);
+                std::vector<int> identities(kCount, 0);
+                std::vector<int*> ptrs(kCount, nullptr);
+                std::vector<usize> sizes(kCount, sizeof(int));
+                std::vector<ThreadExposee> exposees;
+
+                for (int i = 0; i < kCount; ++i) {
+                    values[i] = i;
+                    identities[i] = i + 1;
+                    ptrs[i] = &values[i];
+                    exposees.push_back(exposer.expose((void**) &ptrs[i], &sizes[i], &identities[i]));
+                }
+
+                int hitCount = 0;
+                int valueSum = 0;
+                for (int i = 0; i < kCount; ++i) {
+                    auto found = exposer.find(&identities[i]);
+                    if (found.isValid()) {
+                        hitCount++;
+                        valueSum += *(int*) found.peekExposee();
+                    }
+                }
+                constexpr int expectedSum = (kCount - 1) * kCount / 2;
+                LOG("扩容后 ", kCount, " 个 find 全部命中: ", (hitCount == kCount) ? "PASS" : "FAIL");
+                LOG("扩容后 find 读取值总和 = ", valueSum, "（应为 ", expectedSum, "）");
+
+                int iterateCount = 0;
+                for (auto it = exposer.begin(); it != exposer.end(); ++it) {
+                    auto exp = *it;
+                    ankerl::nanobench::doNotOptimizeAway(exp);
+                    iterateCount++;
+                }
+                LOG("扩容后迭代器遍历 count = ", iterateCount, "（应为 ", kCount, "）");
+
+                for (auto& exp : exposees) {
+                    exposer.unexpose(exp);
+                }
+
+                int afterCount = 0;
+                for (int i = 0; i < kCount; ++i) {
+                    auto found = exposer.find(&identities[i]);
+                    if (found.isValid()) {
+                        afterCount++;
+                    }
+                }
+                LOG("全部 unexpose 后 find 全部失效: ", (afterCount == 0) ? "PASS" : "FAIL");
+            }
+        }
     }
 
     namespace {
@@ -311,6 +366,34 @@ namespace Texpose::test::expose {
             }
         }
 
+        auto testBenchFindMissLargeScale() -> void {
+            LOG("--- [性能] Find 大规模未命中延迟（扩容验证） ---");
+            auto exposer = ThreadExposer::current();
+            constexpr int kCount = 1000;
+            std::vector<int> values(kCount, 0);
+            std::vector<int> identities(kCount, 0);
+            std::vector<int*> ptrs(kCount, nullptr);
+            std::vector<usize> sizes(kCount, sizeof(int));
+            std::vector<ThreadExposee> exposees;
+
+            for (int i = 0; i < kCount; ++i) {
+                identities[i] = i + 1;
+                ptrs[i] = &values[i];
+                exposees.push_back(exposer.expose((void**) &ptrs[i], &sizes[i], &identities[i]));
+            }
+
+            globalBench.batch(1000).run("[性能] 1000 个 identity 频繁换目标 (未命中)", [&] {
+                for (int i = 0; i < 1000; ++i) {
+                    auto found = exposer.find(&identities[i % kCount]);
+                    ankerl::nanobench::doNotOptimizeAway(found);
+                }
+            });
+
+            for (auto& exp : exposees) {
+                exposer.unexpose(exp);
+            }
+        }
+
         auto testBenchIteration() -> void {
             LOG("--- [性能] 迭代器遍历开销 ---");
             auto exposer = ThreadExposer::current();
@@ -357,10 +440,12 @@ namespace Texpose::test::expose {
             testThreadExitCallback();
             testThreadIsolation();
             testCacheMechanism();
+            testRehashExpansion();
 
             testBenchExposeLatency();
             testBenchFindHitLatency();
             testBenchFindMissLatency();
+            testBenchFindMissLargeScale();
             testBenchIteration();
         }
 
