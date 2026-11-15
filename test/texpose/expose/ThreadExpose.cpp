@@ -302,9 +302,66 @@ namespace Texpose::test::expose {
                 LOG("全部 unexpose 后 find 全部失效: ", (afterCount == 0) ? "PASS" : "FAIL");
             }
         }
+
+        auto testCurrentFastPath() -> void {
+            LOG("--- [正确性] current() 原子快速路径 ---");
+            LOGGER_INDENT_BLOCK(true) {
+                auto first = ThreadExposer::current();
+                LOG("首次 current().isValid() = ", first.isValid() ? "PASS" : "FAIL");
+
+                int val = 123;
+                int* ptr = &val;
+                usize size = sizeof(int);
+                int identity = 4242;
+                auto exp = first.expose((void**) &ptr, &size, &identity);
+
+                bool stable = true;
+                for (int i = 0; i < 1000; ++i) {
+                    auto next = ThreadExposer::current();
+                    auto found = next.find(&identity);
+                    if (!found.isValid() || found.rawHandle() != exp.rawHandle()) {
+                        stable = false;
+                        break;
+                    }
+                }
+                LOG("连续 1000 次 current() 指向同一 exposer: ", stable ? "PASS" : "FAIL");
+
+                first.unexpose(exp);
+
+                std::atomic<int> validCount = 0;
+                constexpr int kThreadCount = 8;
+                constexpr int kCallPerThread = 100;
+                std::vector<std::thread> threads;
+
+                for (int t = 0; t < kThreadCount; ++t) {
+                    threads.emplace_back([&validCount, kCallPerThread]() {
+                        for (int i = 0; i < kCallPerThread; ++i) {
+                            auto exposer = ThreadExposer::current();
+                            if (exposer.isValid()) {
+                                validCount.fetch_add(1, std::memory_order_relaxed);
+                            }
+                        }
+                    });
+                }
+                for (auto& t : threads) t.join();
+
+                LOG("多线程并发 ", kThreadCount * kCallPerThread, " 次 current() 全部有效: ", (validCount.load() == kThreadCount * kCallPerThread) ? "PASS" : "FAIL");
+            }
+        }
     }
 
     namespace {
+        auto testBenchCurrentLatency() -> void {
+            LOG("--- [性能] current() 快速路径延迟 ---");
+
+            globalBench.batch(1000).run("[性能] current() 快速路径", [&] {
+                for (int i = 0; i < 1000; ++i) {
+                    auto exposer = ThreadExposer::current();
+                    ankerl::nanobench::doNotOptimizeAway(exposer);
+                }
+            });
+        }
+
         auto testBenchExposeLatency() -> void {
             LOG("--- [性能] Expose 延迟 ---");
             auto exposer = ThreadExposer::current();
@@ -441,7 +498,9 @@ namespace Texpose::test::expose {
             testThreadIsolation();
             testCacheMechanism();
             testRehashExpansion();
+            testCurrentFastPath();
 
+            testBenchCurrentLatency();
             testBenchExposeLatency();
             testBenchFindHitLatency();
             testBenchFindMissLatency();

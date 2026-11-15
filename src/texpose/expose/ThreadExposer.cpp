@@ -18,7 +18,7 @@ namespace Texpose::src::expose {
             }
 
             namespace {
-                bool globalExposerValid = false;
+                volatile bool globalExposerValid = false;
 
                 #ifdef _WIN32
                     DWORD globalExposerTlsSlot = TLS_OUT_OF_INDEXES;
@@ -34,97 +34,127 @@ namespace Texpose::src::expose {
 
     auto ThreadExposer_current() -> ThreadExposer* {
         #ifdef _WIN32
-            InitOnceExecuteOnce(
-                &Internal::globalExposerOnce,
-                (PINIT_ONCE_FN) (+[](PINIT_ONCE, PVOID, PVOID*) -> BOOL {
-                    Internal::globalExposerTlsSlot = TlsAlloc();
-                    if (Internal::globalExposerTlsSlot == TLS_OUT_OF_INDEXES) {
-                        return TRUE;
-                    }
+            #if defined(_MSC_VER) && !defined(__clang__)
+                const bool valid = Internal::globalExposerValid;
+                #if defined(_M_ARM64)
+                    __dmb(_ARM64_BARRIER_ISH);
+                #else
+                    _ReadBarrier();
+                #endif
+            #else
+                const bool valid = __atomic_load_n(&Internal::globalExposerValid, __ATOMIC_ACQUIRE);
+            #endif
 
-                    Internal::globalExposerFlsSlot = FlsAlloc(+[](void* const inSelf) -> void {
-                        auto* const self = (ThreadExposer*) inSelf;
-                        if (!self) {
-                            return;
+            if (!valid) {
+                InitOnceExecuteOnce(
+                    &Internal::globalExposerOnce,
+                    (PINIT_ONCE_FN) (+[](PINIT_ONCE, PVOID, PVOID*) -> BOOL {
+                        Internal::globalExposerTlsSlot = TlsAlloc();
+                        if (Internal::globalExposerTlsSlot == TLS_OUT_OF_INDEXES) {
+                            return TRUE;
                         }
 
-                        if (self->ownedThreadExposees) {
-                            for (usize i = 0; i < self->ownedThreadExposeeCount; ++i) {
-                                ThreadExposee* const threadExposee = self->ownedThreadExposees[i];
-
-                                auto* const threadExitCallback = threadExposee->threadExitCallback;
-                                auto** const exposeePtr = threadExposee->exposeePtr;
-                                if (threadExitCallback && exposeePtr) {
-                                    *exposeePtr = threadExitCallback(ThreadExposee_accessExposee(threadExposee), threadExposee->external);
-                                }
-
-                                free(threadExposee);
+                        Internal::globalExposerFlsSlot = FlsAlloc(+[](void* const inSelf) -> void {
+                            auto* const self = (ThreadExposer*) inSelf;
+                            if (!self) {
+                                return;
                             }
 
-                            free(self->ownedThreadExposees);
-                        }
+                            if (self->ownedThreadExposees) {
+                                for (usize i = 0; i < self->ownedThreadExposeeCount; ++i) {
+                                    ThreadExposee* const threadExposee = self->ownedThreadExposees[i];
 
-                        if (self->identifiedThreadExposeeLists) {
-                            free(self->identifiedThreadExposeeLists);
-                        }
+                                    auto* const threadExitCallback = threadExposee->threadExitCallback;
+                                    auto** const exposeePtr = threadExposee->exposeePtr;
+                                    if (threadExitCallback && exposeePtr) {
+                                        *exposeePtr = threadExitCallback(ThreadExposee_accessExposee(threadExposee), threadExposee->external);
+                                    }
 
-                        free(self);
-                    });
-
-                    if (Internal::globalExposerFlsSlot == FLS_OUT_OF_INDEXES) {
-                        TlsFree(Internal::globalExposerTlsSlot);
-                        Internal::globalExposerTlsSlot = TLS_OUT_OF_INDEXES;
-                        return TRUE;
-                    }
-
-                    Internal::globalExposerValid = true;
-                    return TRUE;
-                }),
-                nullptr, nullptr
-            );
-        #else
-            pthread_once(
-                &Internal::globalExposerOnce,
-                +[]() -> void {
-                    if (pthread_key_create(&Internal::globalExposerKey, +[](void* const inSelf) -> void {
-                        auto* const self = (ThreadExposer*) inSelf;
-                        if (!self) {
-                            return;
-                        }
-
-                        if (self->ownedThreadExposees) {
-                            for (usize i = 0; i < self->ownedThreadExposeeCount; ++i) {
-                                ThreadExposee* const threadExposee = self->ownedThreadExposees[i];
-
-                                auto* const threadExitCallback = threadExposee->threadExitCallback;
-                                auto** const exposeePtr = threadExposee->exposeePtr;
-                                if (threadExitCallback && exposeePtr) {
-                                    *exposeePtr = threadExitCallback(ThreadExposee_accessExposee(threadExposee), threadExposee->external);
+                                    free(threadExposee);
                                 }
 
-                                free(threadExposee);
+                                free(self->ownedThreadExposees);
                             }
 
-                            free(self->ownedThreadExposees);
+                            if (self->identifiedThreadExposeeLists) {
+                                free(self->identifiedThreadExposeeLists);
+                            }
+
+                            free(self);
+                        });
+
+                        if (Internal::globalExposerFlsSlot == FLS_OUT_OF_INDEXES) {
+                            TlsFree(Internal::globalExposerTlsSlot);
+                            Internal::globalExposerTlsSlot = TLS_OUT_OF_INDEXES;
+                            return TRUE;
                         }
 
-                        if (self->identifiedThreadExposeeLists) {
-                            free(self->identifiedThreadExposeeLists);
-                        }
+                        #if defined(_MSC_VER) && !defined(__clang__)
+                            #if defined(_M_ARM64)
+                                Internal::globalExposerValid = true;
+                                __dmb(_ARM64_BARRIER_ISH);
+                            #else
+                                _ReadWriteBarrier();
+                                Internal::globalExposerValid = true;
+                            #endif
+                        #else
+                            __atomic_store_n(&Internal::globalExposerValid, true, __ATOMIC_RELEASE);
+                        #endif
 
-                        free(self);
-                    }) != 0) {
-                        return;
-                    }
+                        return TRUE;
+                    }),
+                    nullptr, nullptr
+                );
 
-                    Internal::globalExposerValid = true;
+                if (!Internal::globalExposerValid) {
+                    return nullptr;
                 }
-            );
-        #endif
+            }
+        #else
+            if (!__atomic_load_n(&Internal::globalExposerValid, __ATOMIC_ACQUIRE)) {
+                pthread_once(
+                    &Internal::globalExposerOnce,
+                    +[]() -> void {
+                        if (pthread_key_create(&Internal::globalExposerKey, +[](void* const inSelf) -> void {
+                            auto* const self = (ThreadExposer*) inSelf;
+                            if (!self) {
+                                return;
+                            }
 
-        if (!Internal::globalExposerValid) {
-            return nullptr;
-        }
+                            if (self->ownedThreadExposees) {
+                                for (usize i = 0; i < self->ownedThreadExposeeCount; ++i) {
+                                    ThreadExposee* const threadExposee = self->ownedThreadExposees[i];
+
+                                    auto* const threadExitCallback = threadExposee->threadExitCallback;
+                                    auto** const exposeePtr = threadExposee->exposeePtr;
+                                    if (threadExitCallback && exposeePtr) {
+                                        *exposeePtr = threadExitCallback(ThreadExposee_accessExposee(threadExposee), threadExposee->external);
+                                    }
+
+                                    free(threadExposee);
+                                }
+
+                                free(self->ownedThreadExposees);
+                            }
+
+                            if (self->identifiedThreadExposeeLists) {
+                                free(self->identifiedThreadExposeeLists);
+                            }
+
+                            free(self);
+                        }) != 0) {
+                            return;
+                        }
+
+                        __atomic_store_n(&Internal::globalExposerValid, true, __ATOMIC_RELEASE);
+                    }
+                );
+
+                if (!__atomic_load_n(&Internal::globalExposerValid, __ATOMIC_ACQUIRE)) {
+                    return nullptr;
+                }
+            }
+        #endif
 
         #ifdef _WIN32
             #if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
