@@ -13,9 +13,9 @@ Whether you are building a network engine, a game server, or high-performance mi
 In `Texpose`, we manage concurrent lifecycles through a minimalist model:
 
 - **`ThreadExposer` (The Registry)**: A thread-local registry that manages all data exposed by the current thread. Being thread-local (TLS/FLS) ensures lock-free operations, and cascade destruction automatically triggers upon thread exit, completely preventing memory leaks.
-- **`Exposee` (The Exposed Entity)**: This is the "thing" the user wishes to expose to the thread layer. It is represented as a **pointer** (`void**`) and features **global visibility**. Once a thread `exposes` data, any other thread can safely access it directly by obtaining the `Exposee` pointer (or its internal data pointer) without locking or caring about the owner thread's lifecycle.
+- **`Exposee` (The Exposed Entity)**: This is the abstract "thing" the user wishes to expose. In the C++ wrapper layer, it is concretely encapsulated by the **`ThreadExposee`** handle. The underlying data is represented as a **pointer** (`void**`) and features **global visibility**. Once a thread `exposes` data, any other thread can safely access it directly by obtaining the `ThreadExposee` handle (or its internal data pointer) without locking or caring about the owner thread's lifecycle.
 
-**Design Philosophy**: `ThreadExposer` determines **"where"** the data is, while `Exposee` determines **"what"** the data is and how it can be safely **"accessed across threads"**.
+**Design Philosophy**: `ThreadExposer` determines **"where"** the data is, while `ThreadExposee` determines **"what"** the data is and how it can be safely **"accessed across threads"**.
 
 ---
 
@@ -23,9 +23,9 @@ In `Texpose`, we manage concurrent lifecycles through a minimalist model:
 
 - **Extreme Performance**: Lookup, iteration, and registration all avoid internal locking. Fast paths are dominated by a single memory load, and iteration walks a contiguous pointer array that the hardware prefetcher can fully pipeline.
 - **Cache-Line Isolation**: Core structures are explicitly aligned to prevent false sharing, ensuring that cross-thread reads and local mutations never invalidate each other's CPU caches.
-- **Pointer-level Cross-Thread Sharing**: Encapsulates internal data pointers, sizes, and identities into an `Exposee`, facilitating lock-free direct reads across threads.
+- **Pointer-level Cross-Thread Sharing**: Encapsulates internal data pointers, sizes, and identities into a `ThreadExposee` handle, facilitating lock-free direct reads across threads.
 - **Flexible Identity Binding and Retrieval**: Precise O(1) lookup within the current thread's exposed list via `Identity` (a unique identifier pointer), backed by dynamic hash bucket resizing.
-- **Fully Automatic Lifecycle Management**: Supports **Destroy Callbacks** and **Thread Exit Callbacks**. Automatically cleans up all `Exposee` instances upon thread termination and triggers user logic, eliminating dangling pointers.
+- **Fully Automatic Lifecycle Management**: Supports **Destroy Callbacks** and **Thread Exit Callbacks**. Automatically cleans up all `ThreadExposee` instances upon thread termination and triggers user logic, eliminating dangling pointers.
 
 ---
 
@@ -46,25 +46,25 @@ auto workerThread() -> void {
     usize dataSize = sizeof(int);
     int identity = 1001;
 
-    // Expose the data; the returned handle is safe to pass to other threads.
-    auto exposee = exposer.expose((void**) &dataPtr, &dataSize, &identity);
+    // Expose the data; the returned ThreadExposee handle is safe to pass to other threads.
+    auto threadExposee = exposer.expose((void**) &dataPtr, &dataSize, &identity);
 
     // Cross-thread read: a single pointer dereference, no lock.
-    if (exposee.isValid()) {
-        std::cout << *(int*) exposee.peekExposee() << std::endl;
+    if (threadExposee.isValid()) {
+        std::cout << *(int*) threadExposee.peekExposee() << std::endl;
     }
 
     // O(1) retrieval within the current thread.
     auto found = exposer.find(&identity);
 
-    // Linear iteration over all exposees owned by this thread.
+    // Linear iteration over all ThreadExposee handles owned by this thread.
     for (auto it = exposer.begin(); it != exposer.end(); ++it) {
-        auto currentExposee = *it;
-        // Process currentExposee...
+        auto currentThreadExposee = *it;
+        // Process currentThreadExposee...
     }
 
     // O(1) manual cleanup; thread exit also cleans up automatically.
-    exposer.unexpose(exposee);
+    exposer.unexpose(threadExposee);
 }
 ```
 
@@ -95,11 +95,11 @@ In short: no operation on the exposed data itself ever takes a lock, no internal
 - **TLS / FLS**: Uses OS-level thread-local storage to access the owning `ThreadExposer` directly, with zero locking overhead and an atomic fast path for initialization.
 
 ### 2. Safe Cross-Thread Access
-Because an `Exposee` stores a pointer to the user data pointer (`void**`), cross-thread reads (`peekExposee()`) involve only a single memory load. Combined with a reasonable user-level design (e.g., passing `Exposee` handles only during specific lifecycles), highly efficient lock-free cross-thread data interaction can be achieved without triggering cache invalidation on the owner thread.
+Because a `ThreadExposee` stores a pointer to the user data pointer (`void**`), cross-thread reads (`peekExposee()`) involve only a single memory load. Combined with a reasonable user-level design (e.g., passing `ThreadExposee` handles only during specific lifecycles), highly efficient lock-free cross-thread data interaction can be achieved without triggering cache invalidation on the owner thread.
 
 ### 3. Lifecycle Management
 - **`DestroyExposeeCallback`**: Triggered when `unexpose` is explicitly called, used to clean up business resources.
-- **`ThreadExitCallback`**: Registered via `FlsAlloc` (Windows) or `pthread_key_create` (POSIX). Ensures that all undestroyed `Exposee` instances under the thread are safely reclaimed upon thread exit, allowing user cleanup logic to execute before destruction (returning a new pointer or null).
+- **`ThreadExitCallback`**: Registered via `FlsAlloc` (Windows) or `pthread_key_create` (POSIX). Ensures that all undestroyed `ThreadExposee` instances under the thread are safely reclaimed upon thread exit, allowing user cleanup logic to execute before destruction (returning a new pointer or null).
 
 ---
 

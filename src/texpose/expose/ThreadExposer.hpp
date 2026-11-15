@@ -21,9 +21,9 @@ namespace Texpose::src::expose {
         ThreadExposer* inSelf,
         void** inExposeePtr, usize* inExposeeSizePtr,
         const void* inThreadExposeeRelativeIdentity,
-        void* (*inThreadExitCallback)(void* inExposee, void* inExternal),
-        void (*inDestroyExposeeCallback)(void* inExposee, void* inExternal),
-        void* inExternal
+        void* (*inThreadExitCallback)(void* inExposee, void* inExternal) = nullptr,
+        void (*inDestroyExposeeCallback)(void* inExposee, void* inExternal) = nullptr,
+        void* inExternal = nullptr
     ) -> ThreadExposee*;
     auto ThreadExposer_unexpose(ThreadExposer* inSelf, ThreadExposee* inThreadExposee) -> void;
 
