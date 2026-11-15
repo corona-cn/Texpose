@@ -348,6 +348,81 @@ namespace Texpose::test::expose {
                 LOG("多线程并发 ", kThreadCount * kCallPerThread, " 次 current() 全部有效: ", (validCount.load() == kThreadCount * kCallPerThread) ? "PASS" : "FAIL");
             }
         }
+
+        auto testUnexposePositionConsistency() -> void {
+            LOG("--- [正确性] Unexpose 相对位置一致性 ---");
+            LOGGER_INDENT_BLOCK(true) {
+                auto exposer = ThreadExposer::current();
+
+                constexpr int kCount = 100;
+                std::vector<int> values(kCount, 0);
+                std::vector<int> identities(kCount, 0);
+                std::vector<int*> ptrs(kCount, nullptr);
+                std::vector<usize> sizes(kCount, sizeof(int));
+                std::vector<ThreadExposee> exposees;
+                exposees.reserve(kCount);
+
+                for (int i = 0; i < kCount; ++i) {
+                    values[i] = i;
+                    identities[i] = i + 5000;
+                    ptrs[i] = &values[i];
+                    exposees.push_back(exposer.expose((void**) &ptrs[i], &sizes[i], &identities[i]));
+                }
+
+                // 乱序 unexpose：中间 / 首 / 尾交替，触发大量 swap-with-last
+                const int removeOrder[] = {
+                    50, 0, 99, 1, 98, 2, 97, 25, 75, 30,
+                    70, 20, 80, 10, 90, 40, 60, 5, 95, 45,
+                };
+                constexpr int kRemoveCount = sizeof(removeOrder) / sizeof(removeOrder[0]);
+                bool allConsistent = true;
+                int removedSoFar = 0;
+
+                for (int removeIdx : removeOrder) {
+                    exposer.unexpose(exposees[removeIdx]);
+                    exposees[removeIdx].rawHandle() = nullptr;
+                    removedSoFar++;
+
+                    for (int i = 0; i < kCount; ++i) {
+                        auto expHandle = exposees[i].rawHandle();
+                        if (!expHandle) {
+                            continue;
+                        }
+
+                        auto found = exposer.find(&identities[i]);
+                        if (!found.isValid() || found.rawHandle() != expHandle) {
+                            allConsistent = false;
+                            break;
+                        }
+                    }
+
+                    if (!allConsistent) {
+                        LOG("第 ", removedSoFar, " 次乱序 unexpose 后出现不一致: FAIL");
+                        break;
+                    }
+                }
+                LOG("逐次乱序 unexpose 后剩余节点 find 全部一致: ", allConsistent ? "PASS" : "FAIL");
+
+                int iterateCount = 0;
+                for (auto it = exposer.begin(); it != exposer.end(); ++it) {
+                    auto exp = *it;
+                    ankerl::nanobench::doNotOptimizeAway(exp);
+                    iterateCount++;
+                }
+                LOG("乱序 unexpose 后迭代器 count = ", iterateCount, "（应为 ", kCount - kRemoveCount, "）");
+
+                for (auto& exp : exposees) {
+                    exposer.unexpose(exp);
+                }
+
+                int afterCount = 0;
+                for (auto it = exposer.begin(); it != exposer.end(); ++it) {
+                    ankerl::nanobench::doNotOptimizeAway(*it);
+                    afterCount++;
+                }
+                LOG("全部 unexpose 后迭代器 count = ", afterCount, "（应为 0）");
+            }
+        }
     }
 
     namespace {
@@ -482,6 +557,32 @@ namespace Texpose::test::expose {
                 exposer.unexpose(exp);
             }
         }
+
+        auto testBenchUnexposeLargeScale() -> void {
+            LOG("--- [性能] 大规模逆序 Unexpose 延迟 ---");
+            auto exposer = ThreadExposer::current();
+            constexpr int kCount = 1000;
+            std::vector<int> values(kCount, 0);
+            std::vector<int> identities(kCount, 0);
+            std::vector<int*> ptrs(kCount, nullptr);
+            std::vector<usize> sizes(kCount, sizeof(int));
+
+            // batch 与 lambda 内操作单元数匹配：1000 expose + 1000 unexpose = 2000 对
+            globalBench.batch(2000).minEpochIterations(100).run("[性能] 逆序 Unexpose 1000 节点", [&] {
+                std::vector<ThreadExposee> exposees;
+                exposees.reserve(kCount);
+
+                for (int i = 0; i < kCount; ++i) {
+                    identities[i] = i;
+                    ptrs[i] = &values[i];
+                    exposees.push_back(exposer.expose((void**) &ptrs[i], &sizes[i], &identities[i]));
+                }
+
+                for (int i = kCount - 1; i >= 0; --i) {
+                    exposer.unexpose(exposees[i]);
+                }
+            });
+        }
     }
 
     auto runTests() -> void {
@@ -499,6 +600,7 @@ namespace Texpose::test::expose {
             testCacheMechanism();
             testRehashExpansion();
             testCurrentFastPath();
+            testUnexposePositionConsistency();
 
             testBenchCurrentLatency();
             testBenchExposeLatency();
@@ -506,6 +608,7 @@ namespace Texpose::test::expose {
             testBenchFindMissLatency();
             testBenchFindMissLargeScale();
             testBenchIteration();
+            testBenchUnexposeLargeScale();
         }
 
         LOG("--- [导出] 导出 Nanobench 性能数据 ---");

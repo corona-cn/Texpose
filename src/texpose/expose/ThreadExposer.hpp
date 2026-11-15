@@ -11,7 +11,7 @@ namespace Texpose::src::expose {
         usize identifiedThreadExposeeListCount;
         usize identifiedThreadExposeeCount;
 
-        const void* cachedThreadExposeeIdentity;
+        const void* cachedThreadExposeeRelativeIdentity;
         struct ThreadExposee* cachedThreadExposee;
     };
 
@@ -20,7 +20,7 @@ namespace Texpose::src::expose {
     auto ThreadExposer_expose(
         ThreadExposer* inSelf,
         void** inExposeePtr, usize* inExposeeSizePtr,
-        const void* inThreadExposeeIdentity,
+        const void* inThreadExposeeRelativeIdentity,
         void* (*inThreadExitCallback)(void* inExposee, void* inExternal),
         void (*inDestroyExposeeCallback)(void* inExposee, void* inExternal),
         void* inExternal
@@ -30,5 +30,5 @@ namespace Texpose::src::expose {
     auto ThreadExposer_begin(ThreadExposer* inSelf) -> ThreadExposee**;
     auto ThreadExposer_end(ThreadExposer* inSelf) -> ThreadExposee**;
 
-    auto ThreadExposer_find(ThreadExposer* inSelf, const void* inThreadExposeeIdentity) -> ThreadExposee*;
+    auto ThreadExposer_find(ThreadExposer* inSelf, const void* inThreadExposeeRelativeIdentity) -> ThreadExposee*;
 }

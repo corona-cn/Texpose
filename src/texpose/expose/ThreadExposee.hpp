@@ -4,7 +4,8 @@
 namespace Texpose::src::expose {
     struct ThreadExposee {
         struct ThreadExposer* ownerThreadExposer;
-        const void* identity;
+        const void* relativeIdentity;
+        usize relativePosition;
 
         void** exposeePtr;
         usize* exposeeSizePtr;

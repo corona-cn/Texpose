@@ -155,13 +155,13 @@ namespace Texpose::include::expose {
 
             auto expose(
                 void** inExposeePtr, usize* inExposeeSizePtr,
-                const void* inThreadExposeeIdentity,
+                const void* inThreadExposeeRelativeIdentity,
                 void* (*inThreadExitCallback)(void* inExposee, void* inExternal) = nullptr,
                 void (*inDestroyExposeeCallback)(void* inExposee, void* inExternal) = nullptr,
                 void* inExternal = nullptr
             ) -> ThreadExposee {
                 assert(this->isValid());
-                return ThreadExposee(src::expose::ThreadExposer_expose(this->handle, inExposeePtr, inExposeeSizePtr, inThreadExposeeIdentity, inThreadExitCallback, inDestroyExposeeCallback, inExternal));
+                return ThreadExposee(src::expose::ThreadExposer_expose(this->handle, inExposeePtr, inExposeeSizePtr, inThreadExposeeRelativeIdentity, inThreadExitCallback, inDestroyExposeeCallback, inExternal));
             }
             auto unexpose(ThreadExposee& inThreadExposee) -> void {
                 assert(this->isValid());
@@ -206,9 +206,9 @@ namespace Texpose::include::expose {
                 return ConstIterator(endThreadExposees, endThreadExposees);
             }
 
-            auto find(const void* inThreadExposeeIdentity) const -> ThreadExposee {
+            auto find(const void* inThreadExposeeRelativeIdentity) const -> ThreadExposee {
                 assert(this->isValid());
-                return ThreadExposee(src::expose::ThreadExposer_find(this->handle, inThreadExposeeIdentity));
+                return ThreadExposee(src::expose::ThreadExposer_find(this->handle, inThreadExposeeRelativeIdentity));
             }
 
         private:
