@@ -1,5 +1,5 @@
 #pragma once
-#include <cstdint>
+#include <stdint.h>
 
 /* === 基本类型别名 === */
 /* 有符号整数 */

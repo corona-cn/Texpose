@@ -1,7 +1,7 @@
 #pragma once
 #include <iostream>
-#include <cstdio>
-#include <cctype>
+#include <stdio.h>
+#include <ctype.h>
 
 #include "../../common/CommonPrimitives.hpp"
 

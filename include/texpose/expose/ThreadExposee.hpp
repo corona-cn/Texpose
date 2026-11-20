@@ -1,5 +1,5 @@
 #pragma once
-#include <cassert>
+#include <assert.h>
 
 #include "../../../src/texpose/expose/ThreadExposee.hpp"
 #include "../../../src/texpose/expose/ThreadExposer.hpp"
