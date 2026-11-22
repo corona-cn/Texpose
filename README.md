@@ -12,8 +12,8 @@ This makes it useful wherever a thread needs to publish a small, well-defined se
 
 In `Texpose`, concurrent lifecycles are managed through a single, narrow model:
 
-- **`ThreadExposer` (The Registry)**: A thread-local registry that owns the entries the current thread has exposed. Because it lives in TLS/FLS, its operations take no internal lock. When the thread exits, the registry runs the registered callbacks and releases the entries it owns.
-- **`Exposee` (The Exposed Entity)**: The abstract unit a user registers. In the C++ wrapper it is represented by the **`ThreadExposee`** handle. The user data is referenced indirectly — through a pointer address (`void**`) and a size address (`usize*`) — so an entry remains valid when the user replaces the object behind it. The handle itself may be read from any thread; the lifetime of the data it points to follows the owner's policy, as described in *Scope and Guarantees*.
+- **`ThreadExposer` (The Registry)**: A thread-local registry that owns the entries the current thread has exposed. Because it lives in TLS/FLS, its operations take no internal lock. When the thread exits, the registry runs the registered callbacks for the entries it still owns and then releases them.
+- **`Exposee` (The Exposed Entity)**: The abstract unit a user registers. In the C++ wrapper it is represented by the **`ThreadExposee`** handle. The user data is referenced indirectly — through a pointer address (`void**`) and a size address (`usize*`) — so an entry remains valid when the user replaces the object behind it. The handle may be read from any thread while the entry is registered; the lifetime of the data it points to follows the owner's policy, as described in *Scope and Guarantees*.
 
 **Design Philosophy**: `ThreadExposer` owns **where** an entry lives and **when** it is released. `ThreadExposee` describes **what** the entry is and how it can be **read**. Ownership of the pointee, synchronization of concurrent access, and hand-off between threads are application policy, not library semantics.
 
@@ -36,15 +36,17 @@ In `Texpose`, concurrent lifecycles are managed through a single, narrow model:
 - Internal bookkeeping stays consistent: a registered entry appears exactly once in exactly one registry, and remains reachable by its identity until it is removed.
 - `find`, `unexpose` and iteration have the complexity stated in *Performance Characteristics*, independent of allocator behavior or registry size.
 - A registered entry's destroy callback runs exactly once — on `unexpose`, on replacement by a duplicate identity, or on thread exit.
+- A thread-exit callback runs for every entry still registered when the thread terminates, before that entry is released.
+- While thread-exit callbacks run, `current()` returns an invalid registry on every platform: the thread-local slot is set to a sentinel before the callbacks execute. Callbacks must not depend on the registry API.
+- Move-assigning a `ThreadExposee` on the owning thread releases the entry the destination previously referenced, then takes the source handle. It is the only place the C++ wrapper removes an entry implicitly.
 - Allocation failure is reported to the caller and leaves existing registrations untouched; no operation fails leaving the registry half-updated.
 
 **Not guaranteed by the library**
 
 - The validity of the object behind `exposeePtr` and `exposeeSizePtr`. The caller owns it and its lifetime.
 - Any ordering or mutual exclusion between concurrent reads and writes of that object. `Texpose` makes the pointer reachable; it does not arbitrate access.
-- The validity of a `ThreadExposee` handle once the entry is removed, replaced, or released by thread exit.
+- The validity of any `ThreadExposee` handle — including copies held by other threads — once the entry is removed, replaced, or released by thread exit.
 - The behavior of passing a handle to a `ThreadExposer` other than the one that created it; `unexpose` is scoped to the owning registry.
-- The state of the thread-local slot while a thread-exit callback runs; this is platform-defined.
 
 **Extension model**
 
@@ -100,7 +102,7 @@ Rather than pinning to specific benchmark numbers, `Texpose` is designed around 
 | Characteristic      | Nature                                                                                      |
 |:--------------------|:--------------------------------------------------------------------------------------------|
 | **Registration**    | Amortized constant time; the array grows geometrically, so cost is bounded by the allocator |
-| **Cached Lookup**   | One pointer comparison against the last-used entry; no hashing                              |
+| **Cached Lookup**   | One pointer comparison against the last-used identity, including a negative result          |
 | **General Lookup**  | Hash-based, amortized O(1); the bucket count grows with the number of identities            |
 | **Unexpose**        | O(1) with respect to registry size; each entry records its own position in the array        |
 | **Iteration**       | Contiguous walk over a pointer array, friendly to hardware prefetchers                      |
@@ -115,14 +117,14 @@ These properties are stated per operation and hold regardless of registry size. 
 ### 1. Data Structure Design
 - **`ThreadExposer`**: A thread-local context that maintains two complementary views of the exposed set — a geometrically growing contiguous array (for linear traversal) and a dynamically expanding hash index (for O(1) retrieval).
 - **`ThreadExposee`**: A cache-line-aligned handle holding the pointer address (`void**`), the size address (`usize*`), the identity, the lifecycle callbacks, and its own position in the owning array, which is what makes removal O(1).
-- **TLS / FLS**: An OS-level slot holds the registry pointer, so the owning thread reaches it directly. The fast path validates initialization with a single atomic check.
+- **TLS / FLS**: On Windows a TLS slot holds the registry for the hot path while an FLS slot drives destruction at thread exit; on POSIX a single `pthread_key_t` serves both roles. The fast path performs one check on a published initialization flag, with the read barrier the platform requires.
 
 ### 2. Cross-Thread Reads
 Because an entry stores the address of the user's pointer rather than the pointer value, a reader performs a single load to obtain the current object, without touching the owner's registry. That load is not ordered against the owner's writes: if the owner may replace the pointee while others are reading, the caller needs its own publication protocol. `Texpose` guarantees reachability and visibility of the pointer; it does not guarantee that the object it selects is the one the caller expects.
 
 ### 3. Lifecycle Management
-- **`DestroyExposeeCallback`**: Runs when an entry is removed — by explicit `unexpose`, by replacement under a duplicate identity, or during thread exit. Intended for releasing business resources.
-- **`ThreadExitCallback`**: Registered via `FlsAlloc` (Windows) or `pthread_key_create` (POSIX). Runs for every entry still registered when the thread terminates, before the entry is released; its return value replaces the stored pointer. Whether the thread-local slot is still readable at that point is platform-defined, so the callback should not depend on the registry API.
+- **`DestroyExposeeCallback`**: Runs when an entry is removed — by explicit `unexpose`, by replacement under a duplicate identity, or during thread exit. Receives the current exposed object and the entry's external pointer, and returns nothing. Intended for releasing business resources.
+- **`ThreadExitCallback`**: Registered through the platform's thread-exit mechanism — `FlsAlloc` on Windows, `pthread_key_create` on POSIX. Runs for every entry still registered when the thread terminates, before that entry is released. It receives the current exposed object and the external pointer and returns nothing; it cannot replace the stored pointer. The registry sets the thread-local slot to a sentinel before these callbacks run, so `current()` returns an invalid registry while they execute.
 
 ---
 
