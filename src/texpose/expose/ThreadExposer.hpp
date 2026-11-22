@@ -1,8 +1,9 @@
 #pragma once
 #include "../../../common/CommonPrimitives.hpp"
+#include "ThreadExposee.hpp"
 
 namespace Texpose::src::expose {
-    struct alignas(64) ThreadExposer {
+    typedef struct alignas(64) ThreadExposer {
         struct ThreadExposee** ownedThreadExposees;
         usize ownedThreadExposeeCount;
         usize ownedThreadExposeeCapacity;
@@ -13,7 +14,7 @@ namespace Texpose::src::expose {
 
         const void* cachedThreadExposeeRelativeIdentity;
         struct ThreadExposee* cachedThreadExposee;
-    };
+    } ThreadExposer;
 
     auto ThreadExposer_current() -> ThreadExposer*;
 
@@ -21,8 +22,8 @@ namespace Texpose::src::expose {
         ThreadExposer* inSelf,
         void** inExposeePtr, usize* inExposeeSizePtr,
         const void* inThreadExposeeRelativeIdentity,
-        void* (*inThreadExitCallback)(void* inExposee, void* inExternal) = nullptr,
-        void (*inDestroyExposeeCallback)(void* inExposee, void* inExternal) = nullptr,
+        ThreadExposee::ThreadExitCallback inThreadExitCallback = nullptr,
+        ThreadExposee::DestroyExposeeCallback inDestroyExposeeCallback = nullptr,
         void* inExternal = nullptr
     ) -> ThreadExposee*;
     auto ThreadExposer_unexpose(ThreadExposer* inSelf, ThreadExposee* inThreadExposee) -> void;

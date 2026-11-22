@@ -229,8 +229,8 @@ namespace Texpose::src::expose {
         ThreadExposer* const inSelf,
         void** const inExposeePtr, usize* const inExposeeSizePtr,
         const void* const inThreadExposeeRelativeIdentity,
-        void* (*inThreadExitCallback)(void* inExposee, void* inExternal),
-        void (*inDestroyExposeeCallback)(void* inExposee, void* inExternal),
+        const ThreadExposee::ThreadExitCallback inThreadExitCallback,
+        const ThreadExposee::DestroyExposeeCallback inDestroyExposeeCallback,
         void* const inExternal
     ) -> ThreadExposee* {
         if (!inSelf || !inExposeePtr || !inExposeeSizePtr) {
@@ -340,8 +340,11 @@ namespace Texpose::src::expose {
             return;
         }
 
-        if (inThreadExposee->destroyExposeeCallback) {
-            inThreadExposee->destroyExposeeCallback(ThreadExposee_accessExposee(inThreadExposee), inThreadExposee->external);
+        const usize threadExposeeCount = inSelf->ownedThreadExposeeCount;
+        auto** const threadExposees = inSelf->ownedThreadExposees;
+        const usize removeIndex = inThreadExposee->relativePosition;
+        if (removeIndex >= threadExposeeCount || threadExposees[removeIndex] != inThreadExposee) {
+            return;
         }
 
         if (inThreadExposee->relativeIdentity) {
@@ -351,6 +354,10 @@ namespace Texpose::src::expose {
                 const usize raw = (usize) inThreadExposee->relativeIdentity;
                 const usize hash = (raw >> 4) ^ (raw >> 16);
                 const usize index = hash & (inSelf->identifiedThreadExposeeListCount - 1);
+                if (inSelf->identifiedThreadExposeeLists[index] != inThreadExposee) {
+                    return;
+                }
+
                 inSelf->identifiedThreadExposeeLists[index] = inThreadExposee->nextInIdentifiedThreadExposeeLists;
             }
 
@@ -361,23 +368,22 @@ namespace Texpose::src::expose {
             --inSelf->identifiedThreadExposeeCount;
         }
 
-        const usize count = inSelf->ownedThreadExposeeCount;
-        ThreadExposee** const threadExposees = inSelf->ownedThreadExposees;
-        const usize removeIndex = inThreadExposee->relativePosition;
-
-        if (removeIndex < count && threadExposees[removeIndex] == inThreadExposee) {
-            if (removeIndex != count - 1) {
-                ThreadExposee* const lastExposee = threadExposees[count - 1];
-                threadExposees[removeIndex] = lastExposee;
-                lastExposee->relativePosition = removeIndex;
-            }
-
-            inSelf->ownedThreadExposeeCount = count - 1;
+        if (removeIndex != threadExposeeCount - 1) {
+            auto* const lastThreadExposee = threadExposees[threadExposeeCount - 1];
+            threadExposees[removeIndex] = lastThreadExposee;
+            lastThreadExposee->relativePosition = removeIndex;
         }
+
+        threadExposees[threadExposeeCount - 1] = nullptr;
+        inSelf->ownedThreadExposeeCount = threadExposeeCount - 1;
 
         if (inSelf->cachedThreadExposee == inThreadExposee) {
             inSelf->cachedThreadExposee = nullptr;
             inSelf->cachedThreadExposeeRelativeIdentity = nullptr;
+        }
+
+        if (inThreadExposee->destroyExposeeCallback) {
+            inThreadExposee->destroyExposeeCallback(ThreadExposee_accessExposee(inThreadExposee), inThreadExposee->external);
         }
 
         #ifdef _WIN32

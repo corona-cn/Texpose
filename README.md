@@ -83,7 +83,7 @@ Rather than pinning to a specific benchmark number, `Texpose` is designed around
 | **Iteration**       | Contiguous memory walk, fully friendly to hardware prefetchers                        |
 | **Synchronization** | Zero internal locks; thread-local isolation keeps hot paths free of atomic contention |
 
-In short: no operation on the exposed data itself ever takes a lock, no internal traversal touches non-contiguous memory, and cache lines are strictly isolated to maximize multi-core scaling. The cost profile is dominated by the user's memory layout, not by `Texpose`.
+In short: no operation on the exposed data itself ever takes a lock, no internal traversal touches non-contiguous memory, and cache lines are strictly isolated to maximize multicore scaling. The cost profile is dominated by the user's memory layout, not by `Texpose`.
 
 ---
 
