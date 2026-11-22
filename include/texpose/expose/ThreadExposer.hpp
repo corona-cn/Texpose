@@ -1,5 +1,5 @@
 #pragma once
-#include <assert.h>
+#include <cassert>
 
 #include "ThreadExposee.hpp"
 #include "../../../src/texpose/expose/ThreadExposer.hpp"
@@ -156,7 +156,7 @@ namespace Texpose::include::expose {
             auto expose(
                 void** inExposeePtr, usize* inExposeeSizePtr,
                 const void* inThreadExposeeRelativeIdentity,
-                void* (*inThreadExitCallback)(void* inExposee, void* inExternal) = nullptr,
+                void (*inThreadExitCallback)(void* inExposee, void* inExternal) = nullptr,
                 void (*inDestroyExposeeCallback)(void* inExposee, void* inExternal) = nullptr,
                 void* inExternal = nullptr
             ) -> ThreadExposee {

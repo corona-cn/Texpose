@@ -32,7 +32,7 @@ namespace Texpose::src::expose {
                     pthread_once_t globalExposerOnce = PTHREAD_ONCE_INIT;
                 #endif
 
-                ThreadExposer* const globalThreadExitSentinel = (ThreadExposer*) (usize) 1;
+                ThreadExposer* const globalThreadExitSentinel = (ThreadExposer*) ((usize) 1);
             }
 
             auto allocateAligned(const usize inSize, const usize inAlignment) -> void* {
@@ -52,6 +52,22 @@ namespace Texpose::src::expose {
                     _aligned_free(inMemory);
                 #else
                     free(inMemory);
+                #endif
+            }
+
+            auto hashThreadExposeeRelativeIdentity(const void* const inRelativeIdentity) -> usize {
+                #if UINTPTR_MAX > 0xFFFFFFFFU
+                    u64 hash = ((u64) ((usize) inRelativeIdentity)) + 0x9E3779B97F4A7C15ULL;
+                    hash = (hash ^ (hash >> 30)) * 0xBF58476D1CE4E5B9ULL;
+                    hash = (hash ^ (hash >> 27)) * 0x94D049BB133111EBULL;
+
+                    return (usize) (hash ^ (hash >> 31));
+                #else
+                    u32 hash = ((u32) ((usize) inRelativeIdentity)) + 0x9E3779B9U;
+                    hash = (hash ^ (hash >> 16)) * 0x21F0AAADU;
+                    hash = (hash ^ (hash >> 15)) * 0x735A2D97U;
+
+                    return (usize) (hash ^ (hash >> 15));
                 #endif
             }
 
@@ -77,9 +93,8 @@ namespace Texpose::src::expose {
                     auto* const threadExposee = threadExposees[i];
 
                     auto* const threadExitCallback = threadExposee->threadExitCallback;
-                    auto** const exposeePtr = threadExposee->exposeePtr;
-                    if (threadExitCallback && exposeePtr) {
-                        *exposeePtr = threadExitCallback(ThreadExposee_accessExposee(threadExposee), threadExposee->external);
+                    if (threadExitCallback) {
+                        threadExitCallback(ThreadExposee_accessExposee(threadExposee), threadExposee->external);
                     }
 
                     auto* const destroyExposeeCallback = threadExposee->destroyExposeeCallback;
@@ -277,9 +292,7 @@ namespace Texpose::src::expose {
                     continue;
                 }
 
-                const usize raw = (usize) relativeIdentity;
-                const usize hash = (raw >> 4) ^ (raw >> 16);
-                const usize index = hash & (newListCount - 1);
+                const usize index = Internal::hashThreadExposeeRelativeIdentity(relativeIdentity) & (newListCount - 1);
                 auto* const headThreadExposee = newLists[index];
 
                 threadExposee->prevInIdentifiedThreadExposeeLists = nullptr;
@@ -329,9 +342,7 @@ namespace Texpose::src::expose {
         inSelf->ownedThreadExposees[inSelf->ownedThreadExposeeCount++] = threadExposee;
 
         if (inThreadExposeeRelativeIdentity) {
-            const usize raw = (usize) inThreadExposeeRelativeIdentity;
-            const usize hash = (raw >> 4) ^ (raw >> 16);
-            const usize index = hash & (inSelf->identifiedThreadExposeeListCount - 1);
+            const usize index = Internal::hashThreadExposeeRelativeIdentity(inThreadExposeeRelativeIdentity) & (inSelf->identifiedThreadExposeeListCount - 1);
             auto* const headThreadExposee = inSelf->identifiedThreadExposeeLists[index];
 
             threadExposee->nextInIdentifiedThreadExposeeLists = headThreadExposee;
@@ -368,9 +379,7 @@ namespace Texpose::src::expose {
             if (inThreadExposee->prevInIdentifiedThreadExposeeLists) {
                 inThreadExposee->prevInIdentifiedThreadExposeeLists->nextInIdentifiedThreadExposeeLists = inThreadExposee->nextInIdentifiedThreadExposeeLists;
             } else {
-                const usize raw = (usize) inThreadExposee->relativeIdentity;
-                const usize hash = (raw >> 4) ^ (raw >> 16);
-                const usize index = hash & (inSelf->identifiedThreadExposeeListCount - 1);
+                const usize index = Internal::hashThreadExposeeRelativeIdentity(inThreadExposee->relativeIdentity) & (inSelf->identifiedThreadExposeeListCount - 1);
                 if (inSelf->identifiedThreadExposeeLists[index] != inThreadExposee) {
                     return;
                 }
@@ -434,9 +443,7 @@ namespace Texpose::src::expose {
             return nullptr;
         }
 
-        const usize raw = (usize) inThreadExposeeRelativeIdentity;
-        const usize hash = (raw >> 4) ^ (raw >> 16);
-        const usize index = hash & (inSelf->identifiedThreadExposeeListCount - 1);
+        const usize index = Internal::hashThreadExposeeRelativeIdentity(inThreadExposeeRelativeIdentity) & (inSelf->identifiedThreadExposeeListCount - 1);
         auto* threadExposee = inSelf->identifiedThreadExposeeLists[index];
         while (threadExposee) {
             if (threadExposee->relativeIdentity == inThreadExposeeRelativeIdentity) {

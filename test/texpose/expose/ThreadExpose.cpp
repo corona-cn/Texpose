@@ -19,11 +19,10 @@ namespace Texpose::test::expose {
         std::atomic<int> globalDestroyCallbackCount = 0;
         std::atomic<int> globalThreadExitCallbackCount = 0;
 
-        auto dummyThreadExitCallback(void* inExposee, void* inExternal) -> void* {
+        auto dummyThreadExitCallback(void* inExposee, void* inExternal) -> void {
             (void) inExposee;
             (void) inExternal;
             globalThreadExitCallbackCount.fetch_add(1, std::memory_order_relaxed);
-            return nullptr;
         }
 
         auto dummyDestroyCallback(void* inExposee, void* inExternal) -> void {

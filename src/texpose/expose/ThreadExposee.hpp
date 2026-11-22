@@ -3,7 +3,7 @@
 
 namespace Texpose::src::expose {
     typedef struct alignas(64) ThreadExposee {
-        typedef void* (*ThreadExitCallback)(void* inExposee, void* inExternal);
+        typedef void (*ThreadExitCallback)(void* inExposee, void* inExternal);
         typedef void (*DestroyExposeeCallback)(void* inExposee, void* inExternal);
 
         struct ThreadExposer* ownerThreadExposer;
