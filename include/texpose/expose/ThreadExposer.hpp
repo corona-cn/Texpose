@@ -95,7 +95,7 @@ namespace Texpose::include::expose {
                     }
 
                     auto operator * () const -> ThreadExposee {
-                        return ThreadExposee((src::expose::ThreadExposee*) *this->beginThreadExposees);
+                        return ThreadExposee((src::expose::ThreadExposee*) (*this->beginThreadExposees));
                     }
 
                     auto operator ++ () -> ConstIterator& {
@@ -169,9 +169,9 @@ namespace Texpose::include::expose {
                     assert(inThreadExposee.rawHandle()->ownerThreadExposer == this->handle);
                     if (inThreadExposee.rawHandle()->ownerThreadExposer == this->handle) {
                         src::expose::ThreadExposer_unexpose(this->handle, inThreadExposee.rawHandle());
-                    }
 
-                    inThreadExposee.rawHandle() = nullptr;
+                        inThreadExposee.rawHandle() = nullptr;
+                    }
                 }
             }
 

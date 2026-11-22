@@ -18,10 +18,16 @@ namespace Texpose::test::expose {
 
         std::atomic<int> globalDestroyCallbackCount = 0;
         std::atomic<int> globalThreadExitCallbackCount = 0;
+        std::atomic<int> globalThreadExitSlotValidCount = 0;
 
         auto dummyThreadExitCallback(void* inExposee, void* inExternal) -> void {
             (void) inExposee;
             (void) inExternal;
+
+            if (ThreadExposer::current().isValid()) {
+                globalThreadExitSlotValidCount.fetch_add(1, std::memory_order_relaxed);
+            }
+
             globalThreadExitCallbackCount.fetch_add(1, std::memory_order_relaxed);
         }
 
@@ -57,7 +63,7 @@ namespace Texpose::test::expose {
                 int identity1 = 1;
                 int identity2 = 2;
 
-                auto exposee1 = exposer.expose((void**) &val1Ptr, &val1Size, &identity1);
+                auto exposee1 = exposer.expose((void**) (&val1Ptr), &val1Size, &identity1);
                 LOG("Expose 返回有效句柄: ", exposee1.isValid() ? "PASS" : "FAIL");
 
                 LOG("peekExposee 读取正确: ", (*(int*) exposee1.peekExposee() == 42) ? "PASS" : "FAIL");
@@ -73,7 +79,7 @@ namespace Texpose::test::expose {
                 int val2 = 100;
                 int* val2Ptr = &val2;
                 usize val2Size = sizeof(int);
-                auto exposee2 = exposer.expose((void**) &val2Ptr, &val2Size, &identity2);
+                auto exposee2 = exposer.expose((void**) (&val2Ptr), &val2Size, &identity2);
 
                 auto found2Retry = exposer.find(&identity2);
                 LOG("Expose(identity2) 后 Find 命中: ", found2Retry.isValid() ? "PASS" : "FAIL");
@@ -91,7 +97,7 @@ namespace Texpose::test::expose {
                 constexpr int kCount = 10;
                 std::vector<int> values(kCount, 0);
                 std::vector<int> identities(kCount, 0);
-                std::vector<int*> ptrs(kCount, nullptr); // 持久化存储指针
+                std::vector<int*> ptrs(kCount, nullptr);
                 std::vector<usize> sizes(kCount, sizeof(int));
                 std::vector<ThreadExposee> exposees;
 
@@ -99,10 +105,10 @@ namespace Texpose::test::expose {
                 for (int i = 0; i < kCount; ++i) {
                     values[i] = i * 10;
                     identities[i] = i + 100;
-                    ptrs[i] = &values[i]; // 指向持久化的内存
+                    ptrs[i] = &values[i];
                     expectedSum += values[i];
 
-                    exposees.push_back(exposer.expose((void**) &ptrs[i], &sizes[i], &identities[i]));
+                    exposees.push_back(exposer.expose((void**) (&ptrs[i]), &sizes[i], &identities[i]));
                 }
 
                 int count = 0;
@@ -132,7 +138,7 @@ namespace Texpose::test::expose {
                 usize size = sizeof(int);
                 int identity = 777;
 
-                auto exposee = exposer.expose((void**) &ptr, &size, &identity, nullptr, dummyDestroyCallback, nullptr);
+                auto exposee = exposer.expose((void**) (&ptr), &size, &identity, nullptr, dummyDestroyCallback, nullptr);
                 LOG("Expose 成功\n");
                 LOG("手动 Unexpose...\n");
                 exposer.unexpose(exposee);
@@ -144,19 +150,30 @@ namespace Texpose::test::expose {
             LOG("--- [正确性] 线程退出回调 ---");
             LOGGER_INDENT_BLOCK(true) {
                 globalThreadExitCallbackCount.store(0);
+                globalDestroyCallbackCount.store(0);
+                globalThreadExitSlotValidCount.store(0);
 
                 std::thread t([]() {
                     auto exposer = ThreadExposer::current();
+
                     int val = 999;
                     int* ptr = &val;
                     usize size = sizeof(int);
                     int identity = 888;
 
-                    exposer.expose((void**) &ptr, &size, &identity, dummyThreadExitCallback, nullptr, nullptr);
+                    exposer.expose((void**) (&ptr), &size, &identity, dummyThreadExitCallback, dummyDestroyCallback, nullptr);
+
+                    int anonymousVal = 1000;
+                    int* anonymousPtr = &anonymousVal;
+                    usize anonymousSize = sizeof(int);
+
+                    exposer.expose((void**) (&anonymousPtr), &anonymousSize, nullptr, dummyThreadExitCallback, dummyDestroyCallback, nullptr);
                 });
                 t.join();
 
-                LOG("线程退出后回调触发次数 = ", globalThreadExitCallbackCount.load(), "（应为 1）");
+                LOG("线程退出后 threadExit 回调触发次数 = ", globalThreadExitCallbackCount.load(), "（应为 2）");
+                LOG("线程退出后 destroy 回调触发次数 = ", globalDestroyCallbackCount.load(), "（应为 2）");
+                LOG("线程退出回调内 current() 均未新建 Exposer: ", (globalThreadExitSlotValidCount.load() == 0) ? "PASS" : "FAIL");
             }
         }
 
@@ -179,7 +196,7 @@ namespace Texpose::test::expose {
                             identities[i] = t * 100 + i;
                             int* ptr = &values[i];
                             usize size = sizeof(int);
-                            exposees.push_back(exposer.expose((void**) &ptr, &size, &identities[i]));
+                            exposees.push_back(exposer.expose((void**) (&ptr), &size, &identities[i]));
                         }
 
                         int foundCount = 0;
@@ -230,8 +247,8 @@ namespace Texpose::test::expose {
                 usize size = sizeof(int);
                 int id1 = 10, id2 = 20;
 
-                auto exp1 = exposer.expose((void**) &ptr1, &size, &id1);
-                auto exp2 = exposer.expose((void**) &ptr2, &size, &id2);
+                auto exp1 = exposer.expose((void**) (&ptr1), &size, &id1);
+                auto exp2 = exposer.expose((void**) (&ptr2), &size, &id2);
 
                 auto f1 = exposer.find(&id1);
                 auto f2 = exposer.find(&id2);
@@ -244,6 +261,74 @@ namespace Texpose::test::expose {
 
                 auto f4 = exposer.find(&id1);
                 LOG("Unexpose 后缓存失效: ", !f4.isValid() ? "PASS" : "FAIL");
+            }
+        }
+
+        auto testFindNegativeCache() -> void {
+            LOG("--- [正确性] Find 负缓存 ---");
+            LOGGER_INDENT_BLOCK(true) {
+                auto exposer = ThreadExposer::current();
+
+                int val = 1;
+                int* ptr = &val;
+                usize size = sizeof(int);
+                int existingIdentity = 6001;
+                int missingIdentity = 6002;
+
+                auto exposee = exposer.expose((void**) (&ptr), &size, &existingIdentity);
+
+                auto firstMiss = exposer.find(&missingIdentity);
+                auto secondMiss = exposer.find(&missingIdentity);
+                LOG("连续两次 Find 不存在 identity 均未命中: ", (!firstMiss.isValid() && !secondMiss.isValid()) ? "PASS" : "FAIL");
+
+                auto stillHit = exposer.find(&existingIdentity);
+                LOG("负缓存后 Find 已存在 identity 仍命中: ", (stillHit.rawHandle() == exposee.rawHandle()) ? "PASS" : "FAIL");
+
+                int missingVal = 2;
+                int* missingPtr = &missingVal;
+                usize missingSize = sizeof(int);
+                auto lateExposee = exposer.expose((void**) (&missingPtr), &missingSize, &missingIdentity);
+
+                auto afterExpose = exposer.find(&missingIdentity);
+                LOG("Expose 后 Find 立即命中（负缓存未阻挡）: ", (afterExpose.rawHandle() == lateExposee.rawHandle()) ? "PASS" : "FAIL");
+
+                exposer.unexpose(exposee);
+                exposer.unexpose(lateExposee);
+
+                auto afterUnexpose = exposer.find(&missingIdentity);
+                LOG("Unexpose 后 Find 未命中: ", !afterUnexpose.isValid() ? "PASS" : "FAIL");
+            }
+        }
+
+        auto testExposeNullIdentity() -> void {
+            LOG("--- [正确性] 空 identity 不污染 Find 缓存 ---");
+            LOGGER_INDENT_BLOCK(true) {
+                auto exposer = ThreadExposer::current();
+
+                int val1 = 11;
+                int* ptr1 = &val1;
+                usize size1 = sizeof(int);
+                int identity1 = 7001;
+
+                auto exposee1 = exposer.expose((void**) (&ptr1), &size1, &identity1);
+                auto beforeNull = exposer.find(&identity1);
+
+                int val2 = 22;
+                int* ptr2 = &val2;
+                usize size2 = sizeof(int);
+
+                auto exposeeNull = exposer.expose((void**) (&ptr2), &size2, nullptr);
+                LOG("空 identity Expose 返回有效句柄: ", exposeeNull.isValid() ? "PASS" : "FAIL");
+
+                auto afterNull = exposer.find(&identity1);
+                LOG("空 identity Expose 后 Find 原 identity 仍命中: ", (beforeNull.rawHandle() == afterNull.rawHandle()) ? "PASS" : "FAIL");
+                LOG("Find 结果不是空 identity 条目: ", (afterNull.rawHandle() != exposeeNull.rawHandle()) ? "PASS" : "FAIL");
+
+                auto findNull = exposer.find(nullptr);
+                LOG("Find(nullptr) 未命中: ", !findNull.isValid() ? "PASS" : "FAIL");
+
+                exposer.unexpose(exposeeNull);
+                exposer.unexpose(exposee1);
             }
         }
 
@@ -263,7 +348,7 @@ namespace Texpose::test::expose {
                     values[i] = i;
                     identities[i] = i + 1;
                     ptrs[i] = &values[i];
-                    exposees.push_back(exposer.expose((void**) &ptrs[i], &sizes[i], &identities[i]));
+                    exposees.push_back(exposer.expose((void**) (&ptrs[i]), &sizes[i], &identities[i]));
                 }
 
                 int hitCount = 0;
@@ -312,7 +397,7 @@ namespace Texpose::test::expose {
                 int* ptr = &val;
                 usize size = sizeof(int);
                 int identity = 4242;
-                auto exp = first.expose((void**) &ptr, &size, &identity);
+                auto exp = first.expose((void**) (&ptr), &size, &identity);
 
                 bool stable = true;
                 for (int i = 0; i < 1000; ++i) {
@@ -365,7 +450,7 @@ namespace Texpose::test::expose {
                     values[i] = i;
                     identities[i] = i + 5000;
                     ptrs[i] = &values[i];
-                    exposees.push_back(exposer.expose((void**) &ptrs[i], &sizes[i], &identities[i]));
+                    exposees.push_back(exposer.expose((void**) (&ptrs[i]), &sizes[i], &identities[i]));
                 }
 
                 // 乱序 unexpose：中间 / 首 / 尾交替，触发大量 swap-with-last
@@ -444,9 +529,9 @@ namespace Texpose::test::expose {
             usize size = sizeof(int);
             int identity = 1;
 
-            globalBench.batch(1000).run("[性能] Expose 注册", [&] {
+            globalBench.batch(2000).run("[性能] Expose 注册 + Unexpose", [&] {
                 for (int i = 0; i < 1000; ++i) {
-                    auto exp = exposer.expose((void**) &ptr, &size, &identity);
+                    auto exp = exposer.expose((void**) (&ptr), &size, &identity);
                     exposer.unexpose(exp);
                 }
             });
@@ -459,7 +544,7 @@ namespace Texpose::test::expose {
             int* ptr = &val;
             usize size = sizeof(int);
             int identity = 1;
-            auto exp = exposer.expose((void**) &ptr, &size, &identity);
+            auto exp = exposer.expose((void**) (&ptr), &size, &identity);
 
             globalBench.batch(1000).run("[性能] Find 缓存命中", [&] {
                 for (int i = 0; i < 1000; ++i) {
@@ -482,7 +567,7 @@ namespace Texpose::test::expose {
                 identities[i] = i;
                 int* ptr = &values[i];
                 usize size = sizeof(int);
-                exposees.push_back(exposer.expose((void**) &ptr, &size, &identities[i]));
+                exposees.push_back(exposer.expose((void**) (&ptr), &size, &identities[i]));
             }
 
             globalBench.batch(1000).run("[性能] Find 频繁换目标 (未命中)", [&] {
@@ -510,7 +595,7 @@ namespace Texpose::test::expose {
             for (int i = 0; i < kCount; ++i) {
                 identities[i] = i + 1;
                 ptrs[i] = &values[i];
-                exposees.push_back(exposer.expose((void**) &ptrs[i], &sizes[i], &identities[i]));
+                exposees.push_back(exposer.expose((void**) (&ptrs[i]), &sizes[i], &identities[i]));
             }
 
             globalBench.batch(1000).run("[性能] 1000 个 identity 频繁换目标 (未命中)", [&] {
@@ -538,11 +623,10 @@ namespace Texpose::test::expose {
             for (int i = 0; i < kCount; ++i) {
                 identities[i] = i;
                 ptrs[i] = &values[i];
-                exposees.push_back(exposer.expose((void**) &ptrs[i], &sizes[i], &identities[i]));
+                exposees.push_back(exposer.expose((void**) (&ptrs[i]), &sizes[i], &identities[i]));
             }
 
-            // 增大 batch 到 10000 解决 Unstable
-            globalBench.batch(10000).run("[性能] 遍历 1000 个 Exposee", [&] {
+            globalBench.batch(kCount).minEpochIterations(100).run("[性能] 遍历 1000 个 Exposee", [&] {
                 int count = 0;
                 for (auto it = exposer.begin(); it != exposer.end(); ++it) {
                     auto exp = *it;
@@ -574,7 +658,7 @@ namespace Texpose::test::expose {
                 for (int i = 0; i < kCount; ++i) {
                     identities[i] = i;
                     ptrs[i] = &values[i];
-                    exposees.push_back(exposer.expose((void**) &ptrs[i], &sizes[i], &identities[i]));
+                    exposees.push_back(exposer.expose((void**) (&ptrs[i]), &sizes[i], &identities[i]));
                 }
 
                 for (int i = kCount - 1; i >= 0; --i) {
@@ -597,6 +681,8 @@ namespace Texpose::test::expose {
             testThreadExitCallback();
             testThreadIsolation();
             testCacheMechanism();
+            testFindNegativeCache();
+            testExposeNullIdentity();
             testRehashExpansion();
             testCurrentFastPath();
             testUnexposePositionConsistency();
