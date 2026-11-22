@@ -345,8 +345,10 @@ namespace Texpose::src::expose {
             ++inSelf->identifiedThreadExposeeCount;
         }
 
-        inSelf->cachedThreadExposeeRelativeIdentity = inThreadExposeeRelativeIdentity;
-        inSelf->cachedThreadExposee = threadExposee;
+        if (inThreadExposeeRelativeIdentity) {
+            inSelf->cachedThreadExposeeRelativeIdentity = inThreadExposeeRelativeIdentity;
+            inSelf->cachedThreadExposee = threadExposee;
+        }
 
         return threadExposee;
     }
@@ -445,6 +447,9 @@ namespace Texpose::src::expose {
 
             threadExposee = threadExposee->nextInIdentifiedThreadExposeeLists;
         }
+
+        inSelf->cachedThreadExposeeRelativeIdentity = inThreadExposeeRelativeIdentity;
+        inSelf->cachedThreadExposee = nullptr;
 
         return nullptr;
     }
