@@ -318,7 +318,6 @@ namespace Texpose::src::expose {
 
         threadExposee->ownerThreadExposer = inSelf;
         threadExposee->relativeIdentity = inThreadExposeeRelativeIdentity;
-        threadExposee->relativePosition = inSelf->ownedThreadExposeeCount;
         threadExposee->exposeePtr = inExposeePtr;
         threadExposee->exposeeSizePtr = inExposeeSizePtr;
         threadExposee->threadExitCallback = inThreadExitCallback;
@@ -339,6 +338,14 @@ namespace Texpose::src::expose {
             inSelf->ownedThreadExposeeCapacity = newCapacity;
         }
 
+        if (inThreadExposeeRelativeIdentity) {
+            auto* const existingThreadExposee = ThreadExposer_find(inSelf, inThreadExposeeRelativeIdentity);
+            if (existingThreadExposee) {
+                ThreadExposer_unexpose(inSelf, existingThreadExposee);
+            }
+        }
+
+        threadExposee->relativePosition = inSelf->ownedThreadExposeeCount;
         inSelf->ownedThreadExposees[inSelf->ownedThreadExposeeCount++] = threadExposee;
 
         if (inThreadExposeeRelativeIdentity) {

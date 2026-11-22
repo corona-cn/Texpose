@@ -165,12 +165,12 @@ namespace Texpose::include::expose {
             }
             auto unexpose(ThreadExposee& inThreadExposee) -> void {
                 assert(this->isValid());
-                if (inThreadExposee.rawHandle()) {
-                    assert(inThreadExposee.rawHandle()->ownerThreadExposer == this->handle);
-                    if (inThreadExposee.rawHandle()->ownerThreadExposer == this->handle) {
-                        src::expose::ThreadExposer_unexpose(this->handle, inThreadExposee.rawHandle());
+                if (inThreadExposee.handle) {
+                    assert(inThreadExposee.handle->ownerThreadExposer == this->handle);
+                    if (inThreadExposee.handle->ownerThreadExposer == this->handle) {
+                        src::expose::ThreadExposer_unexpose(this->handle, inThreadExposee.handle);
 
-                        inThreadExposee.rawHandle() = nullptr;
+                        inThreadExposee.handle = nullptr;
                     }
                 }
             }

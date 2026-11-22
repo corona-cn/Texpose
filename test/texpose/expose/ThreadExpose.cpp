@@ -71,7 +71,7 @@ namespace Texpose::test::expose {
 
                 auto found1 = exposer.find(&identity1);
                 LOG("Find(identity1) 命中: ", found1.isValid() ? "PASS" : "FAIL");
-                LOG("Find(identity1) 身份匹配: ", (found1.rawHandle() == exposee1.rawHandle()) ? "PASS" : "FAIL");
+                LOG("Find(identity1) 身份匹配: ", (found1.isValid() && found1.peekExposee() == exposee1.peekExposee()) ? "PASS" : "FAIL");
 
                 auto found2 = exposer.find(&identity2);
                 LOG("Find(identity2) 未命中: ", !found2.isValid() ? "PASS" : "FAIL");
@@ -86,6 +86,69 @@ namespace Texpose::test::expose {
 
                 exposer.unexpose(exposee1);
                 exposer.unexpose(exposee2);
+            }
+        }
+
+        auto testExposeOverrideSemantics() -> void {
+            LOG("--- [正确性] 重复 identity 覆盖语义 ---");
+            LOGGER_INDENT_BLOCK(true) {
+                globalDestroyCallbackCount.store(0);
+                auto exposer = ThreadExposer::current();
+
+                int val1 = 1;
+                int val2 = 2;
+                int* ptr1 = &val1;
+                int* ptr2 = &val2;
+                usize size1 = sizeof(int);
+                usize size2 = sizeof(int);
+                int identity = 9001;
+
+                auto first = exposer.expose((void**) (&ptr1), &size1, &identity, nullptr, dummyDestroyCallback, nullptr);
+                LOG("首次 Expose 返回有效句柄: ", first.isValid() ? "PASS" : "FAIL");
+
+                auto foundFirst = exposer.find(&identity);
+                LOG("首次 Expose 后 Find 命中: ", (foundFirst.isValid() && foundFirst.peekExposee() == first.peekExposee()) ? "PASS" : "FAIL");
+
+                auto second = exposer.expose((void**) (&ptr2), &size2, &identity, nullptr, dummyDestroyCallback, nullptr);
+                LOG("覆盖 Expose 返回有效句柄: ", second.isValid() ? "PASS" : "FAIL");
+                LOG("覆盖时旧条目 destroy 回调触发 1 次: ", (globalDestroyCallbackCount.load() == 1) ? "PASS" : "FAIL");
+
+                auto foundSecond = exposer.find(&identity);
+                LOG("覆盖后 Find 返回新条目: ", (foundSecond.isValid() && foundSecond.peekExposee() == second.peekExposee()) ? "PASS" : "FAIL");
+
+                int iterateCount = 0;
+                for (auto it = exposer.begin(); it != exposer.end(); ++it) {
+                    auto exp = *it;
+                    ankerl::nanobench::doNotOptimizeAway(exp);
+                    iterateCount++;
+                }
+                LOG("覆盖后迭代器 count = ", iterateCount, "（应为 1）");
+
+                exposer.unexpose(second);
+                LOG("Unexpose 新条目后 destroy 回调累计 2 次: ", (globalDestroyCallbackCount.load() == 2) ? "PASS" : "FAIL");
+
+                auto afterUnexpose = exposer.find(&identity);
+                LOG("Unexpose 后 Find 未命中: ", !afterUnexpose.isValid() ? "PASS" : "FAIL");
+
+                int anonymousVal1 = 11;
+                int anonymousVal2 = 22;
+                int* anonymousPtr1 = &anonymousVal1;
+                int* anonymousPtr2 = &anonymousVal2;
+                usize anonymousSize = sizeof(int);
+
+                auto anonymous1 = exposer.expose((void**) (&anonymousPtr1), &anonymousSize, nullptr);
+                auto anonymous2 = exposer.expose((void**) (&anonymousPtr2), &anonymousSize, nullptr);
+
+                int anonymousCount = 0;
+                for (auto it = exposer.begin(); it != exposer.end(); ++it) {
+                    auto exp = *it;
+                    ankerl::nanobench::doNotOptimizeAway(exp);
+                    anonymousCount++;
+                }
+                LOG("空 identity 重复 Expose 并存 count = ", anonymousCount, "（应为 2）");
+
+                exposer.unexpose(anonymous2);
+                exposer.unexpose(anonymous1);
             }
         }
 
@@ -254,7 +317,7 @@ namespace Texpose::test::expose {
                 auto f2 = exposer.find(&id2);
                 auto f3 = exposer.find(&id1);
 
-                LOG("缓存命中结果正确: ", (f1.rawHandle() == exp1.rawHandle() && f3.rawHandle() == exp1.rawHandle()) ? "PASS" : "FAIL");
+                LOG("缓存命中结果正确: ", (f1.isValid() && f1.peekExposee() == exp1.peekExposee() && f3.isValid() && f3.peekExposee() == exp1.peekExposee()) ? "PASS" : "FAIL");
 
                 exposer.unexpose(exp1);
                 exposer.unexpose(exp2);
@@ -282,7 +345,7 @@ namespace Texpose::test::expose {
                 LOG("连续两次 Find 不存在 identity 均未命中: ", (!firstMiss.isValid() && !secondMiss.isValid()) ? "PASS" : "FAIL");
 
                 auto stillHit = exposer.find(&existingIdentity);
-                LOG("负缓存后 Find 已存在 identity 仍命中: ", (stillHit.rawHandle() == exposee.rawHandle()) ? "PASS" : "FAIL");
+                LOG("负缓存后 Find 已存在 identity 仍命中: ", (stillHit.isValid() && stillHit.peekExposee() == exposee.peekExposee()) ? "PASS" : "FAIL");
 
                 int missingVal = 2;
                 int* missingPtr = &missingVal;
@@ -290,7 +353,7 @@ namespace Texpose::test::expose {
                 auto lateExposee = exposer.expose((void**) (&missingPtr), &missingSize, &missingIdentity);
 
                 auto afterExpose = exposer.find(&missingIdentity);
-                LOG("Expose 后 Find 立即命中（负缓存未阻挡）: ", (afterExpose.rawHandle() == lateExposee.rawHandle()) ? "PASS" : "FAIL");
+                LOG("Expose 后 Find 立即命中（负缓存未阻挡）: ", (afterExpose.isValid() && afterExpose.peekExposee() == lateExposee.peekExposee()) ? "PASS" : "FAIL");
 
                 exposer.unexpose(exposee);
                 exposer.unexpose(lateExposee);
@@ -321,8 +384,8 @@ namespace Texpose::test::expose {
                 LOG("空 identity Expose 返回有效句柄: ", exposeeNull.isValid() ? "PASS" : "FAIL");
 
                 auto afterNull = exposer.find(&identity1);
-                LOG("空 identity Expose 后 Find 原 identity 仍命中: ", (beforeNull.rawHandle() == afterNull.rawHandle()) ? "PASS" : "FAIL");
-                LOG("Find 结果不是空 identity 条目: ", (afterNull.rawHandle() != exposeeNull.rawHandle()) ? "PASS" : "FAIL");
+                LOG("空 identity Expose 后 Find 原 identity 仍命中: ", (beforeNull.isValid() && afterNull.isValid() && beforeNull.peekExposee() == afterNull.peekExposee()) ? "PASS" : "FAIL");
+                LOG("Find 结果不是空 identity 条目: ", (afterNull.isValid() && afterNull.peekExposee() != exposeeNull.peekExposee()) ? "PASS" : "FAIL");
 
                 auto findNull = exposer.find(nullptr);
                 LOG("Find(nullptr) 未命中: ", !findNull.isValid() ? "PASS" : "FAIL");
@@ -403,7 +466,7 @@ namespace Texpose::test::expose {
                 for (int i = 0; i < 1000; ++i) {
                     auto next = ThreadExposer::current();
                     auto found = next.find(&identity);
-                    if (!found.isValid() || found.rawHandle() != exp.rawHandle()) {
+                    if (!found.isValid() || found.peekExposee() != exp.peekExposee()) {
                         stable = false;
                         break;
                     }
@@ -464,17 +527,15 @@ namespace Texpose::test::expose {
 
                 for (int removeIdx : removeOrder) {
                     exposer.unexpose(exposees[removeIdx]);
-                    exposees[removeIdx].rawHandle() = nullptr;
                     removedSoFar++;
 
                     for (int i = 0; i < kCount; ++i) {
-                        auto expHandle = exposees[i].rawHandle();
-                        if (!expHandle) {
+                        if (!exposees[i].isValid()) {
                             continue;
                         }
 
                         auto found = exposer.find(&identities[i]);
-                        if (!found.isValid() || found.rawHandle() != expHandle) {
+                        if (!found.isValid() || found.peekExposee() != exposees[i].peekExposee()) {
                             allConsistent = false;
                             break;
                         }
@@ -535,6 +596,26 @@ namespace Texpose::test::expose {
                     exposer.unexpose(exp);
                 }
             });
+        }
+
+        auto testBenchExposeOverrideLatency() -> void {
+            LOG("--- [性能] Expose 覆盖延迟 ---");
+            auto exposer = ThreadExposer::current();
+            int val = 1;
+            int* ptr = &val;
+            usize size = sizeof(int);
+            int identity = 1;
+            auto exp = exposer.expose((void**) (&ptr), &size, &identity);
+
+            globalBench.batch(1000).run("[性能] 同 identity 覆盖注册", [&] {
+                for (int i = 0; i < 1000; ++i) {
+                    auto overridden = exposer.expose((void**) (&ptr), &size, &identity);
+                    ankerl::nanobench::doNotOptimizeAway(overridden);
+                }
+            });
+
+            auto threadExposee = exposer.find(&identity);
+            exposer.unexpose(threadExposee);
         }
 
         auto testBenchFindHitLatency() -> void {
@@ -676,6 +757,7 @@ namespace Texpose::test::expose {
         LOGGER_INDENT_BLOCK(true) {
             testBasicLifecycle();
             testExposeAndFind();
+            testExposeOverrideSemantics();
             testIteration();
             testDestroyCallback();
             testThreadExitCallback();
@@ -689,6 +771,7 @@ namespace Texpose::test::expose {
 
             testBenchCurrentLatency();
             testBenchExposeLatency();
+            testBenchExposeOverrideLatency();
             testBenchFindHitLatency();
             testBenchFindMissLatency();
             testBenchFindMissLargeScale();

@@ -52,14 +52,9 @@ namespace Texpose::include::expose {
                 return src::expose::ThreadExposee_peekExposeeSize(this->handle);
             }
 
-            auto rawHandle() -> src::expose::ThreadExposee*& {
-                return this->handle;
-            }
-            auto rawHandle() const -> src::expose::ThreadExposee* const& {
-                return this->handle;
-            }
-
         private:
+            friend class ThreadExposer;
+
             src::expose::ThreadExposee* handle = nullptr;
     };
 }
